@@ -1,0 +1,258 @@
+<?php
+// This file is part of Moodle - http://moodle.org/
+//
+// Moodle is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// Moodle is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+
+/**
+ * Main reset page for resetting all courses in a category.
+ *
+ * @package    local_category_reset
+ * @copyright  2026 Brian Pool, National Trail Local Schools
+ * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
+ */
+
+require_once(__DIR__ . '/../../config.php');
+require_once(__DIR__ . '/reset_form.php');
+require_once($CFG->dirroot . '/course/lib.php');
+require_once($CFG->dirroot . '/group/lib.php');
+
+$categoryid = required_param('id', PARAM_INT);
+
+$category = $DB->get_record('course_categories', ['id' => $categoryid], '*', MUST_EXIST);
+$context = context_coursecat::instance($categoryid);
+
+require_login();
+require_capability('local/category_reset:reset', $context);
+
+$PAGE->set_url('/local/category_reset/reset.php', ['id' => $categoryid]);
+$PAGE->set_context($context);
+$PAGE->set_title(get_string('resetallcourses', 'local_category_reset'));
+$PAGE->set_heading($category->name);
+
+$returnurl = new moodle_url('/course/management.php', ['categoryid' => $categoryid]);
+
+/**
+ * Get all courses in a category and its subcategories.
+ *
+ * @param int $categoryid The category ID
+ * @return array Array of course records
+ */
+function local_category_reset_get_courses($categoryid) {
+    global $DB;
+    
+    $categoryids = [$categoryid];
+    
+    // Get subcategories recursively.
+    $subcategoryids = local_category_reset_get_subcategories($categoryid);
+    $categoryids = array_merge($categoryids, $subcategoryids);
+    
+    list($insql, $params) = $DB->get_in_or_equal($categoryids);
+    $sql = "SELECT c.id, c.fullname, c.shortname, c.category
+            FROM {course} c
+            WHERE c.category $insql
+            AND c.id != 1
+            ORDER BY c.fullname";
+    
+    return $DB->get_records_sql($sql, $params);
+}
+
+/**
+ * Get all subcategory IDs recursively.
+ *
+ * @param int $parentid The parent category ID
+ * @return array Array of subcategory IDs
+ */
+function local_category_reset_get_subcategories($parentid) {
+    global $DB;
+    
+    $subcats = $DB->get_records('course_categories', ['parent' => $parentid], '', 'id');
+    $ids = [];
+    foreach ($subcats as $subcat) {
+        $ids[] = $subcat->id;
+        $ids = array_merge($ids, local_category_reset_get_subcategories($subcat->id));
+    }
+    return $ids;
+}
+
+$courses = local_category_reset_get_courses($categoryid);
+
+if (empty($courses)) {
+    redirect($returnurl, get_string('nocourses', 'local_category_reset'), null, \core\output\notification::NOTIFY_INFO);
+}
+
+// Create form.
+$formdata = [
+    'categoryname' => $category->name,
+    'categoryid' => $categoryid,
+    'coursecount' => count($courses),
+    'courses' => $courses,
+];
+$mform = new category_reset_form(null, $formdata);
+
+// Form cancelled.
+if ($mform->is_cancelled()) {
+    redirect($returnurl);
+}
+
+// Form submitted.
+if ($data = $mform->get_data()) {
+    
+    $startdate = $data->startdate;
+    
+    // Start output.
+    echo $OUTPUT->header();
+    
+    // Add settings link.
+    $settingsurl = new moodle_url('/admin/settings.php', ['section' => 'local_category_reset']);
+    echo '<div class="mb-3">';
+    echo '<a href="' . $settingsurl->out() . '" class="btn btn-primary">⚙ Plugin Settings</a>';
+    echo '</div>';
+    
+    echo "<div class='alert alert-info'>";
+    echo "<h3>Processing Reset...</h3>";
+    echo "</div>";
+    
+    // Get student role IDs.
+    $studentroles = get_archetype_roles('student');
+    $studentroleids = array_keys($studentroles);
+    
+    $resetcount = 0;
+    $errorcount = 0;
+    
+    // Get delete pattern and keep groups.
+    $deletepattern = get_config('local_category_reset', 'deletepattern');
+    $keepgroups = get_config('local_category_reset', 'keepgroups');
+
+    // Parse keep groups into array and trim whitespace.
+    $keepgroupsarray = [];
+    if (!empty($keepgroups)) {
+        $keepgroupsarray = array_map('trim', explode(',', $keepgroups));
+    }
+
+    // DEBUG OUTPUT - Commented out
+    // echo "<div class='alert alert-secondary'>";
+    // echo "<p><strong>Group deletion pattern:</strong> '{$deletepattern}'</p>";
+    
+    // if (!empty($deletepattern)) {
+    //     $pattern = preg_quote($deletepattern, '/');
+    //     $pattern = str_replace('\\*', '.*', $pattern);
+    //     $regex = '/^' . $pattern . '$/';
+    //     echo "<p><strong>Regex pattern:</strong> {$regex}</p>";
+    // }
+
+    // if (!empty($keepgroupsarray)) {
+    //     echo "<p><strong>Groups to keep:</strong> " . implode(', ', $keepgroupsarray) . "</p>";
+    // }
+    // echo "</div>";
+    
+    // Prepare regex pattern.
+    if (!empty($deletepattern)) {
+        $pattern = preg_quote($deletepattern, '/');
+        $pattern = str_replace('\\*', '.*', $pattern);
+        $regex = '/^' . $pattern . '$/';
+    }
+    
+    foreach ($courses as $course) {
+        echo "<h4>Resetting: {$course->fullname} (ID: {$course->id})</h4>";
+        
+        try {
+            $resetdata = (object) [
+                'id' => $course->id,
+                'reset_start_date' => $startdate,
+                'reset_events' => 1,
+                'reset_notes' => 1,
+                'reset_roles_overrides' => 0,
+                'reset_roles_local' => 1,
+                'reset_groups_members' => 1,
+                'reset_groups_remove' => 0,
+                'reset_groupings_members' => 1,
+                'reset_groupings_remove' => 0,
+                'reset_gradebook_items' => 1,
+                'reset_gradebook_grades' => 1,
+                'unenrol_users' => $studentroleids,
+                'delete_blog_associations' => 1,
+                'reset_completion' => 1,
+            ];
+            
+            reset_course_userdata($resetdata);
+            echo "<p>✓ Course data reset</p>";
+            
+            // Delete groups based on configuration pattern.
+            if (!empty($deletepattern)) {
+                $groups = groups_get_all_groups($course->id);
+                // echo "<p>Found " . count($groups) . " groups:</p>";
+                // echo "<ul>";
+                
+                $deletedcount = 0;
+                foreach ($groups as $group) {
+                    $matches = preg_match($regex, $group->name);
+                    $shouldkeep = in_array($group->name, $keepgroupsarray);
+                    // echo "<li>{$group->name} - ";
+                    
+                    if ($matches && !$shouldkeep) {
+                        groups_delete_group($group->id);
+                        // echo "<strong style='color: red;'>DELETED</strong>";
+                        $deletedcount++;
+                    } else {
+                        // if ($shouldkeep) {
+                        //     echo "<span style='color: green;'>kept (in keep list)</span>";
+                        // } else {
+                        //     echo "<span style='color: green;'>kept (doesn't match pattern)</span>";
+                        // }
+                    }
+                    // echo "</li>";
+                }
+                // echo "</ul>";
+                echo "<p>Deleted {$deletedcount} groups</p>";
+            } else {
+                echo "<p>No delete pattern configured - no groups deleted</p>";
+            }
+            
+            $resetcount++;
+            
+        } catch (Exception $e) {
+            echo "<p style='color: red;'>✗ Error: " . $e->getMessage() . "</p>";
+            $errorcount++;
+        }
+        
+        echo "<hr>";
+    }
+    
+    echo "<div class='alert alert-success'>";
+    echo "<h3>Reset Complete</h3>";
+    echo "<p>Successfully reset: {$resetcount} courses</p>";
+    if ($errorcount > 0) {
+        echo "<p>Errors: {$errorcount}</p>";
+    }
+    echo "<p><a href='" . $returnurl->out() . "' class='btn btn-primary'>Return to category</a></p>";
+    echo "</div>";
+    
+    echo $OUTPUT->footer();
+    die();
+}
+
+// Display form.
+echo $OUTPUT->header();
+
+// Add settings link at top of form page.
+$settingsurl = new moodle_url('/admin/settings.php', ['section' => 'local_category_reset']);
+echo '<div class="mb-3">';
+echo '<a href="' . $settingsurl->out() . '" class="btn btn-primary">⚙ Plugin Settings</a>';
+echo '</div>';
+
+echo $OUTPUT->heading(get_string('resetallcourses', 'local_category_reset'));
+
+$mform->display();
+
+echo $OUTPUT->footer();
