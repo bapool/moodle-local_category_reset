@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Version 1.1.0 (2026-02-04)
+
+### Added
+- Automatic activity date reset functionality
+- All activity dates now adjust based on the new course start date
+- Dates maintain the same month and day, only years are updated
+- Activities are updated according to academic year logic (activities before start month get next year)
+- Changed default start date to 2nd Monday in August of current year
+
+### Technical Details
+- Added `local_category_reset_adjust_activity_date()` function
+- Added `local_category_reset_update_activity_dates()` function
+- Supports all activity types with date fields (assignments, quizzes, forums, lessons, etc.)
+- Processes timeopen, timeclose, duedate, cutoffdate, and all other date fields
+
+---
+
 ## [1.0] - 2026-01-21
 
 ### Added

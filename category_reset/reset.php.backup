@@ -85,117 +85,6 @@ function local_category_reset_get_subcategories($parentid) {
     return $ids;
 }
 
-/**
- * Adjust an activity date based on the new course start date.
- * Keeps the same month and day, but adjusts the year based on the course start date.
- * If the course starts in month X, activities in months X-December get the start year,
- * and activities in January through month X-1 get the next year.
- *
- * @param int $olddate The original activity date timestamp
- * @param int $coursestartdate The new course start date timestamp
- * @return int The adjusted date timestamp
- */
-function local_category_reset_adjust_activity_date($olddate, $coursestartdate) {
-    if (empty($olddate)) {
-        return $olddate;
-    }
-    
-    // Get the month and day from the original date.
-    $oldmonth = (int)date('n', $olddate);
-    $oldday = (int)date('j', $olddate);
-    $oldhour = (int)date('G', $olddate);
-    $oldminute = (int)date('i', $olddate);
-    $oldsecond = (int)date('s', $olddate);
-    
-    // Get the start month and year from the new course start date.
-    $startmonth = (int)date('n', $coursestartdate);
-    $startyear = (int)date('Y', $coursestartdate);
-    
-    // Determine the year for this activity.
-    // If activity month >= start month, use start year.
-    // If activity month < start month, use next year.
-    if ($oldmonth >= $startmonth) {
-        $newyear = $startyear;
-    } else {
-        $newyear = $startyear + 1;
-    }
-    
-    // Create the new date.
-    $newdate = mktime($oldhour, $oldminute, $oldsecond, $oldmonth, $oldday, $newyear);
-    
-    return $newdate;
-}
-
-/**
- * Reset all activity dates in a course based on the new course start date.
- *
- * @param int $courseid The course ID
- * @param int $coursestartdate The new course start date timestamp
- */
-function local_category_reset_update_activity_dates($courseid, $coursestartdate) {
-    global $DB;
-    
-    $updatedcount = 0;
-    
-    // Get all course modules in the course.
-    $modules = $DB->get_records('course_modules', ['course' => $courseid]);
-    
-    foreach ($modules as $cm) {
-        // Get the module name.
-        $modinfo = $DB->get_record('modules', ['id' => $cm->module]);
-        if (!$modinfo) {
-            continue;
-        }
-        
-        $modulename = $modinfo->name;
-        $tablename = $modulename;
-        
-        // Get the activity instance.
-        $instance = $DB->get_record($tablename, ['id' => $cm->instance]);
-        if (!$instance) {
-            continue;
-        }
-        
-        // Track if we need to update this instance.
-        $needsupdate = false;
-        
-        // List of common date fields across different activity types.
-        $datefields = [
-            'timeopen', 'timeclose', 'assesstimestart', 'assesstimefinish',
-            'allowsubmissionsfromdate', 'duedate', 'cutoffdate', 'gradingduedate',
-            'timeavailable', 'timedue', 'deadline',
-            'opendate', 'closedate', 'assessmentstart', 'assessmentend',
-            'timestart', 'timeend', 'timecreated', 'timemodified'
-        ];
-        
-        // Check each potential date field.
-        foreach ($datefields as $field) {
-            if (property_exists($instance, $field) && !empty($instance->$field)) {
-                // Don't adjust timecreated or timemodified as these are metadata.
-                if ($field === 'timecreated' || $field === 'timemodified') {
-                    continue;
-                }
-                
-                $oldvalue = $instance->$field;
-                $newvalue = local_category_reset_adjust_activity_date($oldvalue, $coursestartdate);
-                
-                if ($oldvalue != $newvalue) {
-                    $instance->$field = $newvalue;
-                    $needsupdate = true;
-                }
-            }
-        }
-        
-        // Update the instance if any dates were changed.
-        if ($needsupdate) {
-            $DB->update_record($tablename, $instance);
-            $updatedcount++;
-        }
-    }
-    
-    return $updatedcount;
-}
-
 $courses = local_category_reset_get_courses($categoryid);
 
 if (empty($courses)) {
@@ -310,10 +199,6 @@ if ($data = $mform->get_data()) {
             } else {
                 echo '<p>' . get_string('nodeletepattern', 'local_category_reset') . '</p>';
             }
-            
-            // Update activity dates based on new course start date.
-            $activitiesupdated = local_category_reset_update_activity_dates($course->id, $startdate);
-            echo "<p>✓ Updated dates for {$activitiesupdated} activities</p>";
             
             $resetcount++;
             

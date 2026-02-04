@@ -24,6 +24,11 @@ The Category Course Reset plugin streamlines the process of preparing courses fo
 - **Set New Start Date**: Apply a new start date to all courses during the reset process
 - **Safe Operation**: Requires explicit confirmation before executing the reset
 - **Easy Access**: Direct links from category management pages and accessible plugin settings
+- **Automatically adjust all activity dates** based on the new course start date
+  - Maintains the same month and day for each activity
+  - Adjusts years according to the course start date
+  - Example: If course starts August 2026, activities in Aug-Dec become 2026, Jan-Jul become 2027
+
 
 **Perfect for:**
 - Schools transitioning between academic terms

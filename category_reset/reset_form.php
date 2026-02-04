@@ -89,8 +89,11 @@ class category_reset_form extends moodleform {
         
         // Date picker.
         $mform->addElement('date_selector', 'startdate', get_string('selectstartdate', 'local_category_reset'));
-        $mform->setDefault('startdate', strtotime('+1 month'));
-        
+        // Calculate 2nd Monday in August of current year.
+		$currentyear = date('Y');
+		$secondmondayaugust = strtotime('second monday of august ' . $currentyear);
+		$mform->setDefault('startdate', $secondmondayaugust);
+				
         // Buttons.
         $this->add_action_buttons(true, get_string('resetcourse'));
     }
